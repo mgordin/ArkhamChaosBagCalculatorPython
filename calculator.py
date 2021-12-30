@@ -1,13 +1,19 @@
 import sqlite3
+from sqlite3 import Error
 import time
 from itertools import product, islice
+import json
 
 # Dumb config
 autofail_value = -999
-skull_value = -2
+skull_value = 0
 tablet_value = -3
-cultist_value = -1
+cultist_value = -2
 squiggle_value = -4
+
+db_file = 'testdb.db'
+
+variable_tokens = ['Skull', 'Cultist', 'Tablet', 'Squiggle']
 
 # Stuff
 
@@ -17,6 +23,7 @@ def calculationStep(remainingOptions, previousTotal, probMod, pastFrost, first):
         if probMod > 0.0001:
             print(probMod, i, token)
         total = previousTotal + token[0]
+        # Cut it off after three-ish redraws
         if probMod < 0.000001:
             allResults.append([autofail_value, probMod])
         elif token[1]:
@@ -27,7 +34,6 @@ def calculationStep(remainingOptions, previousTotal, probMod, pastFrost, first):
                 allResults.append([autofail_value, probMod])
         elif token[0] == autofail_value:
             allResults.append([autofail_value, probMod])
-        # Let's try cutting it off after two redraws
         else:
             allResults.append([total, probMod])
 
@@ -35,9 +41,7 @@ def calculationStep(remainingOptions, previousTotal, probMod, pastFrost, first):
 def aggregate(results):
     prob = {}
     print("Aggregation - loop")
-    for i in range(100, -1010, -1):
-        if i % 10 == 0:
-            print(i)
+    for i in list(range(21, -25, -1)) + [-999]:
         prob[i] = sum([p for v, p in results if v == i])*100
 
     print(sum(prob.values()))
@@ -75,7 +79,7 @@ def sumStuffDown(prob, target):
     return temp
 
 
-allResults = []
+""" allResults = []
 
 options = [[1, False, 'Star']] + \
     [[1, False, '+1']] + \
@@ -87,16 +91,14 @@ options = [[1, False, 'Star']] + \
     [[tablet_value, False, 'Tablet']] + \
     [[-4, False, '-4']] + \
     [[skull_value, False, 'Skull']]*2 + \
-    [[squiggle_value, False, 'Squiggle']] + \
-    [[2, True, 'Bless']]*10 + \
-    [[-2, True, 'Curse']]*4 + \
-    [[-1, True, 'Frost']]*8 + \
+    [[squiggle_value, False, 'Squiggle']]*2 + \
+    [[-1, True, 'Frost']]*3 + \
     [[autofail_value, False, 'Autofail']]
 
 start_time = time.time()
 calculationStep(options, 0, 1/len(options), False, True)
 cumulative = aggregate(allResults)
-print("This took {} s".format(time.time() - start_time))
+print("This took {} s".format(time.time() - start_time)) """
 
 # counts, values, redraw
 token_options = {
@@ -126,11 +128,61 @@ for k, v in token_options.items():
 # Single iterator of all permutations of options across all tokens
 token_options_fully_expanded = product(*token_options_expanded.values())
 
+# Connect to database
+conn = None
+try:
+    conn = sqlite3.connect(db_file)
+    print(sqlite3.version)
+except Error as e:
+    print(e)
+
+# Create table if needed
+create_table_sql = """ CREATE TABLE IF NOT EXISTS probabilities (
+    p1_count integer NOT NULL,
+    n0_count integer NOT NULL,
+    m1_count integer NOT NULL,
+    m2_count integer NOT NULL,
+    m3_count integer NOT NULL,
+    m4_count integer NOT NULL,
+    skull_count integer NOT NULL,
+    skull_value integer NOT NULL,
+    skull_redraw boolean NOT NULL,
+    cultist_count integer NOT NULL,
+    cultist_value integer NOT NULL,
+    cultist_redraw boolean NOT NULL,
+    tablet_count integer NOT NULL,
+    tablet_value integer NOT NULL,
+    tablet_redraw boolean NOT NULL,
+    squiggle_count integer NOT NULL,
+    squiggle_value integer NOT NULL,
+    squiggle_redraw boolean NOT NULL,
+    bless_count integer NOT NULL,
+    curse_count integer NOT NULL,
+    frost_count integer NOT NULL,
+    star_count integer NOT NULL,
+    autofail_count integer NOT NULL,
+    token_probabilities text NOT NULL
+); """
+try:
+    cursor = conn.cursor()
+    cursor.execute(create_table_sql)
+except Error as e:
+    print(e)
+
+# Saving SQL
+save_sql = '''INSERT INTO probabilities(p1_count,n0_count,m1_count,m2_count,m3_count,m4_count,skull_count,cultist_count,tablet_count,squiggle_count,bless_count,curse_count,frost_count,star_count,autofail_count,skull_value,cultist_value,tablet_value,squiggle_value,skull_redraw,cultist_redraw,tablet_redraw,squiggle_redraw,token_probabilities)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) 
+'''
+
 # Loop through the iterator
+c = 0
 for permutation in token_options_fully_expanded:
+    if c > 0:
+        break
     # Build the bag in the right format for this permutation
     bag = []
-    for token_config in permutation[0]:
+    print(permutation)
+    for token_config in permutation:
         if token_config[0] != 0:
             bag += [[token_config[1], token_config[2],
                      token_config[3]]]*token_config[0]
@@ -140,11 +192,22 @@ for permutation in token_options_fully_expanded:
     calculationStep(bag, 0, 1/len(bag), False, True)
     cumulative = aggregate(allResults)
 
-    # Save ???  Halp
+    # Save
+    save_values = [x[0] for x in permutation] + \
+        [x[1] for x in permutation if x[3] in variable_tokens] + \
+        [x[2] for x in permutation if x[3]
+            in variable_tokens] + [json.dumps(cumulative)]
+    cursor.execute(save_sql, save_values)
+    conn.commit()
+    c += 1
 
+# Close db connection
+conn.close()
 
 # ---
 # Number of permutations
+
+
 def nPermutations(token_options):
     count = 1
     for k, v in token_options.items():
